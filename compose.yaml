@@ -1,0 +1,148 @@
+services:
+
+  # ============================================================
+  # HiveMQ MQTT Broker
+  # ============================================================
+  # hivemq:
+  #   image: hivemq/hivemq4:latest
+  #   pull_policy: always
+
+  #   ports:
+  #     # Interface/porta HTTP do HiveMQ
+  #     - "8080:8080"
+
+  #     # MQTT
+  #     - "1883:1883"
+
+  #   environment:
+  #     HIVEMQ_LICENSE_KEY: ${HIVEMQ_LICENSE_KEY}
+  #     HIVEMQ_LOG_BASED_CLUSTERING_ENABLED: "true"
+
+  #   volumes:
+  #     - hivemq_data:/opt/hivemq/data
+  #     - hivemq_logs:/opt/hivemq/log
+
+  #   restart: unless-stopped
+  hivemq:
+    image: hivemq/hivemq4:latest
+    pull_policy: always
+
+    ports:
+    - "8080:8080"
+    - "1883:1883"
+
+    environment:
+      HIVEMQ_LICENSE_KEY: ${HIVEMQ_LICENSE_KEY}
+      HIVEMQ_LOG_BASED_CLUSTERING_ENABLED: "true"
+
+    volumes:
+      - hivemq_data:/opt/hivemq/data
+      - hivemq_logs:/opt/hivemq/log
+
+
+  # ============================================================
+  # Simulador de ESP32
+  # ============================================================
+  simulator:
+    build:
+      context: ./simulator
+
+    environment:
+      # Dentro da rede Docker, "hivemq" é o hostname
+      MQTT_HOST: hivemq
+      MQTT_PORT: 1883
+
+      MQTT_USERNAME: ${MQTT_USERNAME:-}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+
+      MQTT_TOPIC: iot/+/telemetry
+
+      SIMULATOR_INTERVAL: ${SIMULATOR_INTERVAL:-2}
+      SIMULATOR_DEVICE_ID: ${SIMULATOR_DEVICE_ID:-esp32-001}
+
+    depends_on:
+      - hivemq
+
+    restart: unless-stopped
+
+
+  # ============================================================
+  # Backend
+  # ============================================================
+  backend:
+    build:
+      context: ./backend
+
+    environment:
+      # MQTT
+      MQTT_HOST: hivemq
+      MQTT_PORT: 1883
+
+      MQTT_USERNAME: ${MQTT_USERNAME:-}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+
+      MQTT_TOPIC: iot/+/telemetry
+
+      # PostgreSQL
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-iot}
+      POSTGRES_USER: ${POSTGRES_USER:-iot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-iot_dev_password}
+
+    ports:
+      # API + Dashboard
+      - "8000:8000"
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+      hivemq:
+        condition: service_started
+
+    restart: unless-stopped
+
+
+  # ============================================================
+  # PostgreSQL
+  # ============================================================
+  db:
+    image: postgres:17-alpine
+
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-iot}
+      POSTGRES_USER: ${POSTGRES_USER:-iot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-iot_dev_password}
+
+    ports:
+      # Opcional: permite acessar o banco pelo host
+      - "5432:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-iot} -d ${POSTGRES_DB:-iot}"
+        ]
+
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+    restart: unless-stopped
+
+
+# ==============================================================
+# Volumes
+# ==============================================================
+volumes:
+
+  hivemq_data:
+
+  hivemq_logs:
+
+  postgres_data:

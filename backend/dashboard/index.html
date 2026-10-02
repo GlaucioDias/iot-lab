@@ -1,0 +1,391 @@
+<!DOCTYPE html> <html lang="pt-BR"> <head> <meta charset="UTF-8"> <meta name="viewport" content="width=device-width, initial-scale=1"> <title>IoT Telemetry Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+    body {
+        font-family: Arial, sans-serif;
+        background: #f4f6f8;
+        margin: 0;
+        padding: 30px;
+    }
+
+    h1 {
+        margin-bottom: 30px;
+    }
+
+    .card {
+        background: white;
+        border-radius: 10px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    }
+
+    .chart-container {
+        position: relative;
+        height: 450px;
+    }
+
+    .status {
+        color: #666;
+        font-size: 14px;
+        margin-top: 10px;
+    }
+</style>
+
+</head> <body>
+<h1>IoT Telemetry Dashboard</h1>
+
+<div class="card">
+    <h2>Temperatura, Umidade e Ponto de Orvalho</h2>
+
+    <div class="chart-container">
+        <canvas id="telemetryChart"></canvas>
+    </div>
+
+    <div class="status" id="status">
+        Carregando dados...
+    </div>
+</div>
+
+<script>
+    let telemetryChart = null;
+
+    const UPDATE_INTERVAL = 3000;
+    const MAX_READINGS = 100;
+
+
+    /*
+     * Calcula o ponto de orvalho utilizando
+     * a fórmula de Magnus.
+     *
+     * temperature = temperatura em °C
+     * humidity = umidade relativa em %
+     */
+    function calculateDewPoint(temperature, humidity) {
+
+        const a = 17.625;
+        const b = 243.04;
+
+        const gamma =
+            Math.log(humidity / 100) +
+            (a * temperature) /
+            (b + temperature);
+
+        return (
+            (b * gamma) /
+            (a - gamma)
+        );
+    }
+
+
+    /*
+     * Cria o gráfico apenas uma vez.
+     */
+    function createChart() {
+
+        const ctx =
+            document
+                .getElementById("telemetryChart")
+                .getContext("2d");
+
+
+        telemetryChart = new Chart(
+            ctx,
+            {
+                type: "line",
+
+                data: {
+                    labels: [],
+
+                    datasets: [
+
+                        {
+                            label: "Temperatura °C",
+                            data: [],
+                            borderColor: "#ff5733",
+                            backgroundColor: "rgba(255, 87, 51, 0.10)",
+                            borderWidth: 2,
+                            tension: 0.3,
+                            pointRadius: 2,
+                            yAxisID: "temperature"
+                        },
+
+                        {
+                            label: "Umidade %",
+                            data: [],
+                            borderColor: "#3498db",
+                            backgroundColor: "rgba(52, 152, 219, 0.10)",
+                            borderWidth: 2,
+                            tension: 0.3,
+                            pointRadius: 2,
+                            yAxisID: "humidity"
+                        },
+
+                        {
+                            label: "Ponto de orvalho °C",
+                            data: [],
+                            borderColor: "#8e44ad",
+                            backgroundColor: "rgba(142, 68, 173, 0.10)",
+                            borderWidth: 2,
+                            borderDash: [6, 4],
+                            tension: 0.3,
+                            pointRadius: 2,
+                            yAxisID: "temperature"
+                        }
+
+                    ]
+                },
+
+                options: {
+
+                    responsive: true,
+
+                    maintainAspectRatio: false,
+
+                    animation: false,
+
+                    interaction: {
+                        mode: "index",
+                        intersect: false
+                    },
+
+                    plugins: {
+                        legend: {
+                            display: true
+                        },
+
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+
+                                    const value =
+                                        context.parsed.y;
+
+                                    if (
+                                        context.dataset.label
+                                            .includes("Umidade")
+                                    ) {
+                                        return (
+                                            context.dataset.label +
+                                            ": " +
+                                            value.toFixed(1) +
+                                            "%"
+                                        );
+                                    }
+
+                                    return (
+                                        context.dataset.label +
+                                        ": " +
+                                        value.toFixed(1) +
+                                        " °C"
+                                    );
+                                }
+                            }
+                        }
+                    },
+
+                    scales: {
+
+                        x: {
+                            title: {
+                                display: true,
+                                text: "Horário"
+                            }
+                        },
+
+                        temperature: {
+                            type: "linear",
+                            position: "left",
+
+                            title: {
+                                display: true,
+                                text: "Temperatura / Ponto de Orvalho (°C)"
+                            }
+                        },
+
+                        humidity: {
+                            type: "linear",
+                            position: "right",
+
+                            min: 0,
+                            max: 100,
+
+                            title: {
+                                display: true,
+                                text: "Umidade (%)"
+                            },
+
+                            grid: {
+                                drawOnChartArea: false
+                            }
+                        }
+                    }
+                }
+            }
+        );
+    }
+
+
+    /*
+     * Atualiza somente os dados do gráfico.
+     *
+     * O gráfico não é destruído nem recriado.
+     */
+    async function loadData() {
+
+        try {
+
+            const response =
+                await fetch(
+                    "/api/readings?limit=" +
+                    MAX_READINGS
+                );
+
+
+            if (!response.ok) {
+                throw new Error(
+                    "Erro HTTP " +
+                    response.status
+                );
+            }
+
+
+            const data =
+                await response.json();
+
+
+            const labels = [];
+
+            const temperatures = [];
+
+            const humidity = [];
+
+            const dewPoints = [];
+
+
+            data.forEach(item => {
+
+                const date =
+                    new Date(item.timestamp);
+
+
+                labels.push(
+                    date.toLocaleTimeString(
+                        "pt-BR"
+                    )
+                );
+
+
+                const temperature =
+                    Number(
+                        item.temperature_c
+                    );
+
+
+                const humidityValue =
+                    Number(
+                        item.humidity_pct
+                    );
+
+
+                const dewPoint =
+                    calculateDewPoint(
+                        temperature,
+                        humidityValue
+                    );
+
+
+                temperatures.push(
+                    temperature
+                );
+
+
+                humidity.push(
+                    humidityValue
+                );
+
+
+                dewPoints.push(
+                    dewPoint
+                );
+
+            });
+
+
+            /*
+             * Atualiza somente os dados.
+             */
+            telemetryChart.data.labels =
+                labels;
+
+
+            telemetryChart.data.datasets[0].data =
+                temperatures;
+
+
+            telemetryChart.data.datasets[1].data =
+                humidity;
+
+
+            telemetryChart.data.datasets[2].data =
+                dewPoints;
+
+
+            /*
+             * false evita animação e mantém
+             * o gráfico estável durante a atualização.
+             */
+            telemetryChart.update("none");
+
+
+            document
+                .getElementById("status")
+                .textContent =
+                    "Última atualização: " +
+                    new Date().toLocaleTimeString(
+                        "pt-BR"
+                    ) +
+                    " — " +
+                    data.length +
+                    " leituras";
+
+
+        } catch (error) {
+
+            console.error(
+                "Erro ao carregar telemetria:",
+                error
+            );
+
+
+            document
+                .getElementById("status")
+                .textContent =
+                    "Erro ao carregar dados: " +
+                    error.message;
+        }
+    }
+
+
+    /*
+     * Inicialização.
+     */
+    createChart();
+
+    loadData();
+
+
+    /*
+     * Atualiza somente os dados a cada 3 segundos.
+     *
+     * A página NÃO é recarregada.
+     */
+    setInterval(
+        loadData,
+        UPDATE_INTERVAL
+    );
+
+</script>
+
+</body> </html>
